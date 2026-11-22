@@ -22,16 +22,20 @@ first-passage event and a terminal event, and derive its Brownian benchmarks: ha
 crossings are invisible at the end of the horizon, and the 99th-percentile path loss exceeds the
 terminal loss by a factor of $1.107$.
 \else
-Most risk numbers in crypto are built from closing prices. Liquidation engines do not wait for the
+Most risk measures in crypto, volatility and value-at-risk among them, are computed from closing
+prices. Liquidation engines do not wait for the
 close: they watch the mark price continuously and close a leveraged position the moment it touches
 its liquidation level. Even in an idealised random market, a view based on closing prices misses
 half of those liquidations, and understates the 1-in-100 adverse move by about 11\%.
 \fi
 We measure both effects on 12 months of 1-minute mark prices for every USDT-margined perpetual
 listed on Binance, delisted contracts included, using each contract's own maintenance-margin rate
-and maximum leverage. Outside BTC and ETH, \UTenLo--\UTenHi\% of liquidations at 10x leverage, and
-\UTwentyFiveLo--\UTwentyFiveHi\% at 25x, the median leverage on offer at Binance and Bybit, happen in
-windows that end inside the liquidation boundary. The 99th-percentile adverse move along the path is
+and maximum leverage. Higher leverage brings more liquidations, not a smaller blind spot. Outside
+BTC and ETH, a long held for a day in a smaller contract (our Tail tier) is liquidated in \TailDayLongPP{} of windows at 10x
+and in \TailDayLongPPTwentyFive{} at 25x, the median leverage on offer at Binance and Bybit, while
+only \TailDayLongPC{} and \TailDayLongPCTwentyFive{} end beyond the liquidation level. The share of
+liquidations that the close misses stays near one half at every leverage: \UTenLo--\UTenHi\% at
+10x and \UTwentyFiveLo--\UTwentyFiveHi\% at 25x. The 99th-percentile adverse move along the path is
 \KappaLo{} to \KappaHi{} times the 99th-percentile close-to-close loss, against $1.107$ for a random
 walk, and is largest for short positions in newly listed contracts. The results hold on a balanced
 cohort of surviving contracts.
@@ -39,8 +43,8 @@ cohort of surviving contracts.
 
 \section{Introduction}
 
-Most risk numbers are still built the way they are in equity markets: one price per period, the
-close, and a volatility estimated from the returns between closes. Leveraged positions in crypto
+Most risk measures, volatility and value-at-risk among them, are still computed as in equity
+markets: one price per period, the close, and returns between closes. Leveraged positions in crypto
 perpetual futures do not live on closes; they live on the path. The exchange's liquidation engine
 watches the mark price continuously and closes a position the moment it touches the liquidation
 level. Crypto perpetuals differ from a closing-price world in three ways:
@@ -57,7 +61,7 @@ market and over a full year.
 to 100x, Deribit up to 50x on its linear USDC perpetuals, and Hyperliquid up to 40x. Smaller
 contracts offer less, but not little: the median contract allows 25x on Binance and Bybit and 20x on
 OKX, and between 17\% and 37\% of contracts on these three venues allow 50x or more. The liquidation
-level sits at $1/L$ minus the maintenance margin (Section~\ref{sec:liq}). For BTC on Binance, with a
+level sits at $1/L$ minus the maintenance-margin rate (Section~\ref{sec:liq}). For BTC on Binance, with a
 maintenance-margin rate of 0.4\%, a long is liquidated after a fall of 9.6\% at 10x, 3.6\% at 25x and
 1.6\% at 50x. Liquid crypto assets make such moves within hours, often within minutes. Binance,
 Bybit, OKX and Hyperliquid all document that liquidation is triggered by a mark price rather than by
@@ -316,26 +320,48 @@ could lie.
 \subsection{Liquidation level}
 \label{sec:liq}
 
-Consider isolated margin, a position of entry notional $N$ and leverage $L$, so that the initial
-margin is $N/L$. A perpetual is delta-one, so profit and loss is linear in the relative price move
-$x$: $+Nx$ for a long and $-Nx$ for a short.\footnote{We refer throughout to linear (USDT- or
-USDC-margined) perpetuals, whose profit and loss is linear in the price. Inverse, coin-margined
-perpetuals, such as Binance's COIN-M contracts or Deribit's BTC-PERPETUAL, settle profit and loss in
-the base asset, $N(1-M_{t_0}/M_{t_0+t})$ for a long, which is not linear in the price; their
-liquidation level differs and is not studied here.} Liquidation occurs when equity falls to the
-maintenance margin. On Binance, maintenance margin is a rate $m$ times the position's notional
-\emph{at the current mark price}~\cite{binance-liq}:
+Consider isolated margin and a position of $Q$ contracts opened at mark price $M_0$, so that its
+entry notional is $N=QM_0$ and, at leverage $L$, its initial margin is $N/L$. (On Binance's USDT
+perpetuals one contract is one unit of the base asset.) A perpetual is delta-one, so profit and loss
+is linear in the relative price move $x=M/M_0-1$: $+Nx$ for a long and $-Nx$ for a short.\footnote{We
+refer throughout to linear (USDT- or USDC-margined) perpetuals, whose profit and loss is linear in the
+price. Inverse, coin-margined perpetuals, such as Binance's COIN-M contracts or Deribit's
+BTC-PERPETUAL, settle profit and loss in the base asset, $N(1-M_0/M)$ for a long, which is not linear
+in the price; their liquidation level differs and is not studied here.} Liquidation occurs when
+equity falls to the maintenance margin.
+
+\paragraph{Binance's maintenance margin.} Binance computes the maintenance margin of a USDT-margined
+position as
+\begin{equation}
+\mathrm{MM} = m_k \cdot Q \cdot M - A_k,
+\end{equation}
+where $Q\cdot M$ is the position notional at the current \emph{mark} price $M$ (not the index or the
+last traded price), $m_k$ is the maintenance-margin rate of the notional bracket $k$ the position falls
+in, and $A_k$ is that bracket's maintenance amount, which keeps the requirement continuous from one
+bracket to the next~\cite{binance-margin,binance-liqprice}. A position is liquidated when the mark
+price reaches its liquidation price~\cite{binance-liq}. In the first bracket $A_1=0$ for every
+contract in the bracket table~\cite{binance-brackets}, so $\mathrm{MM}=m\,QM=mN(1+x)$ and
 \begin{align}
 \text{long:}\quad & \tfrac{1}{L} + x = m(1+x) &&\Longrightarrow\quad d_\ell = \frac{1/L - m}{1-m},\\
 \text{short:}\quad & \tfrac{1}{L} - x = m(1+x) &&\Longrightarrow\quad d_s = \frac{1/L - m}{1+m}.
 \end{align}
 To first order the liquidation level is $1/L-m$ from entry, which is why a 50x long on BTC
-($m=0.4\%$) is liquidated after 1.6\%, not 2\%. Under this convention, a long's notional, and with it
-its maintenance requirement, falls as the price falls, so a long survives a slightly larger move than a
-short at the same leverage. This asymmetry is specific to the convention. Where maintenance is set on
-the entry notional, $d=1/L-m$ for both sides; where collateral is held in the traded coin, as with
-inverse contracts, equity itself moves with the price and the level is different again. A position is
-admissible only if $1/L>m$.
+($m=0.4\%$) is liquidated after 1.6\%, not 2\%. A position is admissible only if $1/L>m$. The first
+bracket covers notionals up to a cap (300{,}000 USDT for BTCUSDT); larger positions face higher rates
+and lower maximum leverage, so the levels studied here are those of positions within the first
+bracket. Because the requirement scales with the current mark notional, a long's requirement falls
+as the price falls, and a long survives a slightly larger move than a short at the same leverage.
+
+\paragraph{Other venues.} Maintenance-margin rules differ between exchanges, in the rates and
+brackets, in the price that sets the notional, and in what the requirement includes. Hyperliquid sets
+the maintenance margin at half the initial margin at a contract's maximum leverage~\cite{hl-margin};
+OKX adds the liquidation fee to the maintenance requirement when it computes its margin
+ratio~\cite{okx-margin}. Where maintenance is set on the entry notional, $d=1/L-m$ for both sides, and
+the long--short asymmetry above disappears; where collateral is held in the traded coin, as with
+inverse contracts, equity itself moves with the price and the level is different again. The
+liquidation levels in this paper are therefore Binance's. The unseen share, however, depends on the
+level only weakly (Section~\ref{sec:results}), so the main result does not rest on any one venue's
+margin rule.
 
 \paragraph{Contract terms.} Each contract uses its own first-bracket maintenance-margin rate and
 maximum leverage from Binance's bracket table, retrieved on 22 November 2026~\cite{binance-brackets}.
@@ -419,7 +445,13 @@ tier, the liquidation probability is \TailHourPPTen{} at 10x, \TailHourPPTwentyF
 and \TailHourPCFifty. Held for 24 hours, a 50x long in the Tail tier is liquidated in \TailDayPPFifty{}
 of windows, while only \TailDayPCFifty{} end beyond the level; at 25x in the Large tier the figures
 are \LargeDayPPTwentyFive{} and \LargeDayPCTwentyFive. Outside the Majors tier, the unseen share stays
-between \LevULo\% and \LevUHi\% in every cell of the table. In the example of
+between \LevULo\% and \LevUHi\% in every cell of the table.
+
+The share does not grow with leverage because it is a ratio. A closer liquidation level raises the
+probability of touching it and the probability of ending beyond it together, and for a random walk
+the first is twice the second at every distance\iftechnical{} (Corollary~\ref{cor:half})\fi. Higher
+leverage therefore multiplies the liquidations a close-to-close view misses, while the fraction it
+misses stays near one half. In the example of
 Figure~\ref{fig:example}, the 50x position was closed within twelve minutes of entry.
 
 \begin{table}[t]
@@ -538,7 +570,8 @@ setting, the close-to-close return is the wrong object for measuring risk. Half 
 are invisible at the close even in an idealised random market, and on a full year of Binance data,
 with each contract's own margin terms and delisted contracts included, the share is between
 \UTenLo\% and \UTenHi\% at 10x and between \UTwentyFiveLo\% and \UTwentyFiveHi\% at 25x outside BTC
-and ETH. The tail is worse than the frequency suggests: the 1-in-100 adverse move along the path is
+and ETH. The share is stable; the count is not. A day-long 25x long in the Tail tier is liquidated in
+\TailDayLongPPTwentyFive{} of windows, against \TailDayLongPP{} at 10x. The tail is worse than the frequency suggests: the 1-in-100 adverse move along the path is
 \KappaLo{} to \KappaHi{} times the close-to-close figure, well above the random-walk value of 1.107,
 and worst for short positions in newly listed contracts. Neither result depends on survivorship, and
 neither is an artefact of mark-price smoothing.
@@ -556,6 +589,13 @@ download to the figures and tables in this paper, together with both editions of
 \begin{thebibliography}{99}\small\raggedright
 \bibitem{binance-liq} Binance. Binance Futures liquidation protocols. Help centre,
 \url{https://www.binance.com/en/support/faq/360033525271}, accessed 22 November 2026.
+\bibitem{binance-margin} Binance. Leverage and margin of USDS-M
+futures. Help centre, \url{https://www.binance.com/en/support/faq/360033162192}, accessed 22 November
+2026.
+\bibitem{binance-liqprice} Binance. How to calculate liquidation price of USDS-M
+futures contracts. Help centre,
+\url{https://www.binance.com/en/support/faq/b3c689c1f50a44cabb3a84e663b81d93}, accessed 22 November
+2026.
 \bibitem{binance-mark} Binance. What are mark price and price index in USD-margined futures? Help
 centre, \url{https://www.binance.com/en/support/faq/360033525071}, accessed 22 November 2026.
 \bibitem{binance-brackets} Binance. Futures leverage and margin brackets, public feed of the Leverage
@@ -568,11 +608,15 @@ accessed 22 November 2026.
 \url{https://api.bybit.com/v5/market/instruments-info?category=linear}, retrieved 22 November 2026.
 \bibitem{okx-liq} OKX. System liquidation mechanism. Help centre,
 \url{https://www.okx.com/en-us/help/system-liquidation-mechanism-eea}, accessed 22 November 2026.
+\bibitem{okx-margin} OKX. Futures margin calculation rules. Help centre,
+\url{https://www.okx.com/en-us/help/futures-margin-calculation-rules}, accessed 22 November 2026.
 \bibitem{okx-api} OKX. V5 API, public instruments,
 \url{https://www.okx.com/api/v5/public/instruments?instType=SWAP}, retrieved 22 November 2026.
 \bibitem{deribit-api} Deribit. API v2, public/get\_instruments,
 \url{https://www.deribit.com/api/v2/public/get_instruments?currency=USDC&kind=future}, retrieved 22
 November 2026.
+\bibitem{hl-margin} Hyperliquid. Margining. Documentation,
+\url{https://hyperliquid.gitbook.io/hyperliquid-docs/trading/margining}, accessed 22 November 2026.
 \bibitem{hl-liq} Hyperliquid. Liquidations. Documentation,
 \url{https://hyperliquid.gitbook.io/hyperliquid-docs/trading/liquidations}, accessed 22 November 2026.
 \bibitem{hl-api} Hyperliquid. Info endpoint, perpetuals metadata, \url{https://api.hyperliquid.xyz/info},

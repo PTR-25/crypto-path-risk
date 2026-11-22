@@ -395,6 +395,8 @@ def text_macros(ex) -> str:
         "UTwentyFiveLo": u_range(nm, 25)[0], "UTwentyFiveHi": u_range(nm, 25)[1],
         "TailDayLongPC": p(cell("tail", 1440, "long", 10, "p_close")),
         "TailDayLongPP": p(cell("tail", 1440, "long", 10, "p_path")),
+        "TailDayLongPCTwentyFive": p(cell("tail", 1440, "long", 25, "p_close")),
+        "TailDayLongPPTwentyFive": p(cell("tail", 1440, "long", 25, "p_path")),
         "TailDayShortPC": p(cell("tail", 1440, "short", 10, "p_close")),
         "TailDayShortPP": p(cell("tail", 1440, "short", 10, "p_path")),
         "MajorsDayU": f"{100 * cell('majors', 1440, 'long', 10, 'hidden_share'):.0f}",
