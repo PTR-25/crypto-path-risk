@@ -1,0 +1,367 @@
+"""Build the paper's figures (paper/figures/*.pdf) and tables (paper/tables/*.tex)
+from results/ and data/. Every number in a table comes from these files.
+
+    uv run python -I scripts/make_paper_assets.py
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+import matplotlib  # noqa: E402
+
+matplotlib.use("pdf")
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
+from pathrisk.liquidation import liquidation_distance  # noqa: E402
+from pathrisk.metrics import brownian_quantile_multiple  # noqa: E402
+from pathrisk.pipeline import StudyConfig, load_universe  # noqa: E402
+
+RES, DATA = ROOT / "results", ROOT / "data"
+FIG, TAB = ROOT / "paper" / "figures", ROOT / "paper" / "tables"
+FIG.mkdir(parents=True, exist_ok=True)
+TAB.mkdir(parents=True, exist_ok=True)
+
+TIERS = ["majors", "large", "tail", "new"]
+LABEL = {"majors": "Majors (BTC, ETH)", "large": "Large (top 30)", "tail": "Tail", "new": "New ($<$30 days)"}
+SHORT = {"majors": "Majors", "large": "Large", "tail": "Tail", "new": "New"}
+# Reference categorical palette, slots 1-4 in fixed order (adjacent pairs validated, light mode).
+# Every series also carries its own marker and a legend entry, so identity never rests on colour.
+COLOR = {"majors": "#2a78d6", "large": "#eb6834", "tail": "#1baf7a", "new": "#eda100"}
+MARKER = {"majors": "o", "large": "s", "tail": "^", "new": "D"}
+INK, INK2, MUTED, GRID, AXIS = "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#9a9993"
+CRITICAL = "#d03b3b"
+H_LABEL = {60: "1 h", 240: "4 h", 480: "8 h", 1440: "24 h"}
+LEVERAGES = [2, 3, 5, 10, 20, 25, 50]
+EXAMPLE_LEVERAGES = [10, 25, 50]
+
+# Academic style: Computer Modern, matching the LaTeX body text.
+plt.rcParams.update({
+    "font.family": "serif", "font.serif": ["cmr10"], "mathtext.fontset": "cm",
+    "axes.formatter.use_mathtext": True, "axes.unicode_minus": False, "font.size": 9.5,
+    "axes.labelsize": 9.5, "axes.labelcolor": INK, "axes.edgecolor": AXIS, "axes.linewidth": 0.7,
+    "xtick.color": AXIS, "ytick.color": AXIS, "xtick.labelcolor": INK2, "ytick.labelcolor": INK2,
+    "xtick.direction": "out", "ytick.direction": "out", "axes.grid": True, "grid.color": GRID,
+    "grid.linewidth": 0.5, "axes.axisbelow": True, "axes.spines.top": False,
+    "axes.spines.right": False, "legend.frameon": False, "text.color": INK, "pdf.fonttype": 42,
+    "lines.linewidth": 1.6, "lines.markersize": 4.5,
+})
+
+mark = pd.read_csv(RES / "mark" / "summary.csv")
+last = pd.read_csv(RES / "last" / "summary.csv")
+cohort = pd.read_csv(RES / "mark-cohort" / "summary.csv")
+q_mark = pd.read_csv(RES / "mark" / "quantiles.csv")
+q_last = pd.read_csv(RES / "last" / "quantiles.csv")
+q_cohort = pd.read_csv(RES / "mark-cohort" / "quantiles.csv")
+coverage = pd.read_csv(RES / "mark" / "universe_coverage.csv", index_col=0, parse_dates=True)
+BROWN_Q99 = brownian_quantile_multiple(0.99)
+MM = StudyConfig(start="x", end="x").mm_by_tier
+
+
+def pct(x, nd=1):
+    return "--" if pd.isna(x) else f"{100 * x:.{nd}f}\\%"  # LaTeX tables need \\%
+
+
+def panel(ax, letter, text):
+    ax.text(0.0, 1.03, f"({letter}) {text}", transform=ax.transAxes, fontsize=9.5, va="bottom")
+
+
+def pct_axis(ax):
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{100 * v:.0f}%"))
+
+
+def tier_legend(fig, ax):
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncols=4, fontsize=8.5, bbox_to_anchor=(0.5, -0.01),
+               handlelength=2.2, columnspacing=1.6)
+
+
+# ---------------------------------------------------------------- Figure 1: one real window, three leverages
+def fig_example():
+    sym, start, h, m = "BTCUSDT", pd.Timestamp("2026-02-05 17:00", tz="UTC"), 1440, MM["majors"]
+    b = pd.read_parquet(DATA / "parquet" / "markPriceKlines" / "1m" / f"{sym}.parquet")
+    t = pd.to_datetime(b["open_time"], unit="ms", utc=True)
+    w = b[(t >= start) & (t < start + pd.Timedelta(minutes=h))].copy()
+    w["hours"] = (pd.to_datetime(w["open_time"], unit="ms", utc=True) - start).dt.total_seconds() / 3600
+    o, c = w["open"].iloc[0], w["close"].iloc[-1]
+    rel = lambda p: 100 * (p / o - 1)  # noqa: E731
+
+    fig, ax = plt.subplots(figsize=(6.4, 3.1))
+    ax.fill_between(w["hours"], rel(w["low"]), rel(w["high"]), color=COLOR["majors"], alpha=0.2, lw=0)
+    ax.plot(w["hours"], rel(w["close"]), color=COLOR["majors"], lw=1.0)
+    ax.axhline(0, color=INK2, lw=0.8)
+    touches = {}
+    for L, ls in zip(EXAMPLE_LEVERAGES, [(0, (6, 2)), (0, (3, 2)), (0, (1, 1.5))]):
+        d = liquidation_distance(L, m, "long")
+        ax.axhline(-100 * d, color=CRITICAL, lw=1.0, ls=ls)
+        hit = w.loc[w["low"] <= o * (1 - d), "hours"]
+        touches[L] = (d, float(hit.iloc[0]) if len(hit) else None)
+        ax.text(24.3, -100 * d, f"{L}x  ({-100 * d:.1f}%)", va="center", fontsize=8.5, color=CRITICAL)
+        if len(hit):
+            ax.plot([hit.iloc[0]], [-100 * d], marker="o", ms=4.5, color=CRITICAL, mec="white", mew=1)
+    lo = w.loc[w["low"].idxmin()]
+    ax.annotate(f"low {rel(lo['low']):.1f}%", (lo["hours"], rel(lo["low"])), xytext=(8, -2),
+                textcoords="offset points", fontsize=8.5, va="center")
+    ax.annotate(f"close {rel(c):+.1f}%", (24, rel(c)), xytext=(-6, 8), textcoords="offset points",
+                fontsize=8.5, ha="right")
+    ax.set_xlim(0, 24)
+    ax.set_xticks(range(0, 25, 4))
+    ax.set_xlabel(f"Hours after entry ({start:%-d %B %Y}, {start:%H:%M} UTC)")
+    ax.set_ylabel("Mark price relative to entry")
+    ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator(2))
+    ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(lambda v, _: f"{v:.0f}%"))
+    fig.tight_layout()
+    fig.subplots_adjust(right=0.86)
+    fig.savefig(FIG / "fig1_example.pdf")
+    plt.close(fig)
+    return {"entry": o, "close": c, "low": lo["low"], "touches": touches}
+
+
+# ---------------------------------------------------------------- Figure 2: unseen share vs leverage
+def fig_hidden_share():
+    fig, axes = plt.subplots(1, 2, figsize=(6.4, 3.0), sharey=True)
+    for ax, h, letter in zip(axes, (60, 1440), "ab"):
+        for tier in TIERS:
+            s = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == "long") & (mark.p_close > 0)]
+            # Points whose 95% CI is wider than 25 points rest on a handful of close breaches: omitted.
+            s = s[(s.hidden_share_hi - s.hidden_share_lo) <= 0.25].sort_values("leverage")
+            yerr = [s.hidden_share - s.hidden_share_lo, s.hidden_share_hi - s.hidden_share]
+            ax.errorbar(s.leverage, s.hidden_share, yerr=yerr, color=COLOR[tier], marker=MARKER[tier],
+                        mec="white", mew=0.8, elinewidth=0.7, capsize=0, label=LABEL[tier])
+        ax.axhline(0.5, color=INK2, lw=0.8, ls=(0, (2, 2)))
+        ax.set_xscale("log")
+        ax.set_xticks([2, 5, 10, 25, 50], ["2x", "5x", "10x", "25x", "50x"])
+        ax.minorticks_off()
+        ax.set_ylim(0, 1)
+        pct_axis(ax)
+        ax.set_xlabel("Leverage")
+        panel(ax, letter, f"long positions, {H_LABEL[h]} horizon")
+    axes[0].set_ylabel("Unseen share $U$")
+    tier_legend(fig, axes[0])
+    fig.tight_layout(w_pad=2.5, rect=(0, 0.08, 1, 1))
+    fig.savefig(FIG / "fig2_hidden_share.pdf")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------- Figure 3: q99 multiple vs horizon
+def fig_quantile_multiple():
+    fig, axes = plt.subplots(1, 2, figsize=(6.4, 3.0), sharey=True)
+    hs = [60, 240, 480, 1440]
+    for ax, side, letter in zip(axes, ("long", "short"), "ab"):
+        for tier in TIERS:
+            q = q_mark[(q_mark.tier == tier) & (q_mark.side == side) & (q_mark.alpha == 0.99)].set_index("horizon")
+            ax.plot(range(4), q.loc[hs, "multiple"].to_numpy(), color=COLOR[tier], marker=MARKER[tier],
+                    mec="white", mew=0.8, label=LABEL[tier])
+        ax.axhline(BROWN_Q99, color=INK2, lw=0.8, ls=(0, (2, 2)))
+        ax.text(3.15, BROWN_Q99 + 0.01, "Brownian", fontsize=8, ha="right", va="bottom", color=INK2)
+        ax.set_xticks(range(4), [H_LABEL[h] for h in hs])
+        ax.set_xlim(-0.2, 3.2)
+        ax.set_ylim(1.0, 1.75)
+        ax.set_xlabel("Holding horizon $h$")
+        panel(ax, letter, f"{side} positions")
+    axes[0].set_ylabel(r"$Q_{0.99}(\mathrm{path}) \,/\, Q_{0.99}(\mathrm{close})$")
+    tier_legend(fig, axes[0])
+    fig.tight_layout(w_pad=2.5, rect=(0, 0.08, 1, 1))
+    fig.savefig(FIG / "fig3_quantile_multiple.pdf")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------- Figure 4: mark vs traded prices
+def fig_mark_vs_last():
+    fig, axes = plt.subplots(1, 2, figsize=(6.4, 2.8), sharey=True)
+    x = np.arange(len(TIERS))
+    wbar = 0.36
+    for ax, h, letter in zip(axes, (60, 1440), "ab"):
+        for k, (name, s, col) in enumerate((("Mark price", mark, "#2a78d6"), ("Last traded price", last, "#eb6834"))):
+            v = s[(s.horizon == h) & (s.side == "long") & (s.leverage == 10)].set_index("tier").reindex(TIERS)
+            vals = v.hidden_share.where(v.p_close > 0)
+            bars = ax.bar(x + (k - 0.5) * (wbar + 0.02), vals.fillna(0), wbar, color=col, label=name)
+            for rect, val in zip(bars, vals):
+                if pd.notna(val):
+                    ax.text(rect.get_x() + rect.get_width() / 2, val + 0.012, f"{100 * val:.0f}", ha="center",
+                            va="bottom", fontsize=7.5, color=INK2)
+                else:
+                    ax.text(rect.get_x() + rect.get_width() / 2, 0.02, "n/a", ha="center", va="bottom",
+                            fontsize=7, color=MUTED)
+        ax.axhline(0.5, color=INK2, lw=0.8, ls=(0, (2, 2)))
+        ax.set_xticks(x, [SHORT[t] for t in TIERS])
+        ax.set_ylim(0, 0.85)
+        pct_axis(ax)
+        ax.grid(axis="x", visible=False)
+        panel(ax, letter, f"10x long, {H_LABEL[h]} horizon")
+    axes[0].set_ylabel("Unseen share $U$")
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncols=2, fontsize=8.5, bbox_to_anchor=(0.5, -0.01))
+    fig.tight_layout(w_pad=2.5, rect=(0, 0.08, 1, 1))
+    fig.savefig(FIG / "fig4_mark_vs_last.pdf")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------- Figure 5: universe over time
+def fig_universe():
+    cov = coverage.reindex(columns=TIERS, fill_value=0)
+    weekly = cov.resample("W").mean()
+    fig, ax = plt.subplots(figsize=(6.4, 2.5))
+    ax.stackplot(weekly.index, *[weekly[t] for t in TIERS], colors=[COLOR[t] for t in TIERS],
+                 labels=[LABEL[t] for t in TIERS], edgecolor="white", linewidth=0.6)
+    ax.set_ylabel("Contracts in the universe")
+    ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncols=4, fontsize=8.5)
+    ax.margins(x=0)
+    ax.xaxis.set_major_locator(matplotlib.dates.MonthLocator(bymonth=[1, 3, 5, 7, 9, 11]))
+    ax.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%b %Y"))
+    fig.tight_layout()
+    fig.savefig(FIG / "fig5_universe.pdf")
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------- tables
+def table_data():
+    symbols = len((DATA / "symbols.txt").read_text().split())
+    listing = pd.read_csv(DATA / "listing.csv")
+    n_mark = len(list((DATA / "parquet" / "markPriceKlines" / "1m").glob("*.parquet")))
+    u = load_universe(DATA, StudyConfig(start="2025-11-01", end="2026-10-31"))
+    end = u["trading_until"].max()
+    delisted = u.loc[u["trading_until"] < end - pd.Timedelta(days=1), "symbol"].nunique()
+    per_day = coverage.reindex(columns=TIERS, fill_value=0).mean()
+    cohort_n = len((DATA / "cohort.txt").read_text().split())
+    w = mark[(mark.leverage == 10) & (mark.side == "long")].groupby("horizon")["n_windows"].sum()
+    rows = [
+        ("USDT-margined perpetuals in the archive (delisted included)", f"{symbols:,}"),
+        ("\\quad with a listing date", f"{listing['listing_date'].notna().sum():,}"),
+        ("\\quad with 1-minute mark-price data in the study period", f"{n_mark:,}"),
+        ("\\quad in the point-in-time universe on at least one day", f"{u['symbol'].nunique():,}"),
+        ("\\quad of which delisted during the study", f"{delisted:,}"),
+        ("Balanced cohort (live for the whole study)", f"{cohort_n:,}"),
+        ("Mean contracts per day: majors / large / tail / new", " / ".join(f"{per_day[t]:.0f}" for t in TIERS)),
+        ("Holding windows (1 h / 4 h / 8 h / 24 h), millions",
+         " / ".join(f"{w[h] / 1e6:.2f}" for h in (60, 240, 480, 1440))),
+    ]
+    body = "\n".join(f"{a} & {b} \\\\" for a, b in rows)
+    (TAB / "tab_data.tex").write_text(
+        "\\begin{tabular}{@{}lr@{}}\n\\toprule\nItem & Value \\\\\n\\midrule\n" + body + "\n\\bottomrule\n\\end{tabular}\n")
+
+
+def _unseen_cell(r):
+    if r.p_close <= 0:
+        return "--"
+    return f"{pct(r.hidden_share, 0)} \\scriptsize[{pct(r.hidden_share_lo, 0)}, {pct(r.hidden_share_hi, 0)}]"
+
+
+def table_breach():
+    lines = []
+    for tier in TIERS:
+        for h in (60, 480, 1440):
+            cells = [SHORT[tier] if h == 60 else "", H_LABEL[h]]
+            for side in ("long", "short"):
+                r = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == side) & (mark.leverage == 10)].iloc[0]
+                cells += [pct(r.p_close, 2), pct(r.p_path, 2), _unseen_cell(r)]
+            lines.append(" & ".join(cells) + " \\\\")
+        lines.append("\\addlinespace[2pt]")
+    (TAB / "tab_breach.tex").write_text(
+        "\\begin{tabular}{@{}llrrlrrl@{}}\n\\toprule\n"
+        " & & \\multicolumn{3}{c}{Long, 10x} & \\multicolumn{3}{c}{Short, 10x} \\\\\n"
+        "\\cmidrule(lr){3-5}\\cmidrule(lr){6-8}\n"
+        "Tier & $h$ & $p_C$ & $p_P$ & $U$ [95\\% CI] & $p_C$ & $p_P$ & $U$ [95\\% CI] \\\\\n\\midrule\n"
+        + "\n".join(lines[:-1]) + "\n\\bottomrule\n\\end{tabular}\n")
+
+
+def table_leverage():
+    """10x, 25x and 50x side by side: close and path breach probabilities and the unseen share."""
+    lines = []
+    for tier in TIERS:
+        for i, L in enumerate(EXAMPLE_LEVERAGES):
+            cells = [SHORT[tier] if i == 0 else "", f"{L}x", pct(liquidation_distance(L, MM[tier], 'long'), 2)]
+            for h in (60, 1440):
+                r = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == "long") & (mark.leverage == L)].iloc[0]
+                cells += [pct(r.p_close, 2), pct(r.p_path, 2), pct(r.hidden_share, 0) if r.p_close > 0 else "--"]
+            lines.append(" & ".join(cells) + " \\\\")
+        lines.append("\\addlinespace[2pt]")
+    (TAB / "tab_leverage.tex").write_text(
+        "\\begin{tabular}{@{}llrrrrrrr@{}}\n\\toprule\n"
+        " & & & \\multicolumn{3}{c}{1 h} & \\multicolumn{3}{c}{24 h} \\\\\n"
+        "\\cmidrule(lr){4-6}\\cmidrule(lr){7-9}\n"
+        "Tier & $L$ & $d_{\\text{long}}$ & $p_C$ & $p_P$ & $U$ & $p_C$ & $p_P$ & $U$ \\\\\n\\midrule\n"
+        + "\n".join(lines[:-1]) + "\n\\bottomrule\n\\end{tabular}\n")
+
+
+def table_quantiles():
+    lines = []
+    for tier in TIERS:
+        for side in ("long", "short"):
+            cells = [SHORT[tier] if side == "long" else "", side.capitalize()]
+            for h in (60, 1440):
+                r = q_mark[(q_mark.tier == tier) & (q_mark.side == side) & (q_mark.horizon == h) & (q_mark.alpha == 0.99)].iloc[0]
+                cells += [pct(r.q_close, 2), pct(r.q_path, 2), f"{r.multiple:.2f}"]
+            lines.append(" & ".join(cells) + " \\\\")
+        lines.append("\\addlinespace[2pt]")
+    lines.append(f"\\multicolumn{{2}}{{@{{}}l}}{{Brownian benchmark}} & & & {BROWN_Q99:.3f} & & & {BROWN_Q99:.3f} \\\\")
+    (TAB / "tab_quantiles.tex").write_text(
+        "\\begin{tabular}{@{}llrrrrrr@{}}\n\\toprule\n"
+        " & & \\multicolumn{3}{c}{1 h} & \\multicolumn{3}{c}{24 h} \\\\\n"
+        "\\cmidrule(lr){3-5}\\cmidrule(lr){6-8}\n"
+        "Tier & Side & $Q_{0.99}^{C}$ & $Q_{0.99}^{P}$ & $\\kappa_{0.99}$ & $Q_{0.99}^{C}$ & $Q_{0.99}^{P}$ & $\\kappa_{0.99}$ \\\\\n\\midrule\n"
+        + "\n".join(lines) + "\n\\bottomrule\n\\end{tabular}\n")
+
+
+def table_robustness():
+    lines = []
+    for tier in TIERS:
+        cells = [SHORT[tier]]
+        for q in (q_mark, q_cohort, q_last):
+            r = q[(q.tier == tier) & (q.side == "long") & (q.horizon == 60) & (q.alpha == 0.99)]
+            cells.append(f"{r.multiple.iloc[0]:.2f}" if len(r) else "--")
+        for s in (mark, cohort, last):
+            r = s[(s.tier == tier) & (s.side == "long") & (s.horizon == 60) & (s.leverage == 10)]
+            cells.append(pct(r.hidden_share.iloc[0], 0) if len(r) and r.p_close.iloc[0] > 0 else "--")
+        for q in (q_mark, q_cohort, q_last):
+            r = q[(q.tier == tier) & (q.side == "short") & (q.horizon == 1440) & (q.alpha == 0.99)]
+            cells.append(f"{r.multiple.iloc[0]:.2f}" if len(r) else "--")
+        lines.append(" & ".join(cells) + " \\\\")
+    head = " & ".join(["Mark", "Cohort", "Last"] * 3)
+    (TAB / "tab_robustness.tex").write_text(
+        "\\begin{tabular}{@{}lrrrrrrrrr@{}}\n\\toprule\n"
+        " & \\multicolumn{3}{c}{$\\kappa_{0.99}$, long, 1 h} & \\multicolumn{3}{c}{$U$, 10x long, 1 h}"
+        " & \\multicolumn{3}{c}{$\\kappa_{0.99}$, short, 24 h} \\\\\n"
+        "\\cmidrule(lr){2-4}\\cmidrule(lr){5-7}\\cmidrule(lr){8-10}\n"
+        f"Tier & {head} \\\\\n\\midrule\n" + "\n".join(lines) + "\n\\bottomrule\n\\end{tabular}\n")
+
+
+def table_liquidation():
+    levs = [5, 10, 25, 50, 75, 100, 125, 150]
+    lines = []
+    for tier in TIERS:
+        cells = [SHORT[tier], pct(MM[tier], 1)]
+        for L in levs:
+            d = liquidation_distance(L, MM[tier], "long")
+            cells.append(f"{100 * d:.2f}" if d > 0 else "--")
+        lines.append(" & ".join(cells) + " \\\\")
+    (TAB / "tab_liquidation.tex").write_text(
+        "\\begin{tabular}{@{}lr" + "r" * len(levs) + "@{}}\n\\toprule\n"
+        "Tier & $m$ & " + " & ".join(f"{L}x" for L in levs) + " \\\\\n\\midrule\n"
+        + "\n".join(lines) + "\n\\bottomrule\n\\end{tabular}\n")
+
+
+if __name__ == "__main__":
+    ex = fig_example()
+    fig_hidden_share()
+    fig_quantile_multiple()
+    fig_mark_vs_last()
+    fig_universe()
+    table_data()
+    table_breach()
+    table_leverage()
+    table_quantiles()
+    table_robustness()
+    table_liquidation()
+    names = {10: "EXTEN", 25: "EXTWENTYFIVE", 50: "EXFIFTY"}
+    (TAB / "macros.tex").write_text("".join(
+        f"\\newcommand{{\\{names[L]}}}{{{hit:.1f}}}\n" for L, (_, hit) in ex["touches"].items()))
+    print("example:", ex)
+    print("figures:", sorted(p.name for p in FIG.glob("*.pdf")))
+    print("tables:", sorted(p.name for p in TAB.glob("*.tex")))
