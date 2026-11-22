@@ -1,14 +1,23 @@
-# Path-dependent liquidation risk in crypto perpetual futures
+# Half of all liquidations are unseen at the close
 
-Code and paper for *Path-Dependent Liquidation Risk in Crypto Perpetual Futures: On the Inadequacy of
-Close-to-Close Volatility under Continuous Margin Monitoring* (Ricardo Pérez Twerdy, November 2026).
-The paper is [`paper/main.pdf`](paper/main.pdf).
+Code and paper for *Half of All Liquidations Are Unseen at the Close: Path Risk versus Close-to-Close
+Volatility in Crypto Perpetual Futures* (Ricardo Pérez Twerdy, November 2026). There are two editions
+of the same study:
+
+- [`paper/main.pdf`](paper/main.pdf), the **technical edition**, with the stochastic framework
+  (first-passage times, reflection principle, proofs);
+- [`paper/linkedin.pdf`](paper/linkedin.pdf), the **reader edition**, which explains the same ideas
+  in words.
+
+Both editions share one body (`paper/body.tex`), and every number in the text is generated from the
+results.
 
 Liquidation engines liquidate at the first touch of the liquidation boundary; close-to-close risk
 measures see only where the price ends. On 12 months of 1-minute Binance mark prices (753 USDT
 perpetuals, delisted ones included), about half of all liquidations happen in windows that end
 inside the boundary, and the 99th-percentile adverse excursion is 1.20–1.63 times the
-99th-percentile close-to-close loss (Brownian benchmarks: 1/2 and 1.107).
+99th-percentile close-to-close loss (Brownian benchmarks: 1/2 and 1.107). Each contract uses
+its own Binance maintenance-margin rate and maximum leverage.
 
 Independent research, not affiliated with the author's employer. Not investment advice.
 
@@ -59,6 +68,9 @@ committed as [`paper/data/venue_leverage.csv`](paper/data/venue_leverage.csv). R
 - **Liquidation.** Equity `1/L + PnL` meets maintenance `m × mark notional`:
   - long: `d = (1/L − m)/(1 − m)`;
   - short: `d = (1/L − m)/(1 + m)`.
+
+  `m` and the maximum leverage are each contract's first Binance bracket. A leverage level the
+  contract doesn't offer is skipped.
 - **Universe.** Rebuilt every day from information available before that day. Contracts under 30
   days old form their own tier, and each contract leaves the universe at its last trade.
 - **Inference.** Each day counts once, and each contract once within a day. Confidence intervals

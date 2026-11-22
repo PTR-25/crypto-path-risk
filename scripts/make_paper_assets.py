@@ -61,7 +61,9 @@ q_last = pd.read_csv(RES / "last" / "quantiles.csv")
 q_cohort = pd.read_csv(RES / "mark-cohort" / "quantiles.csv")
 coverage = pd.read_csv(RES / "mark" / "universe_coverage.csv", index_col=0, parse_dates=True)
 BROWN_Q99 = brownian_quantile_multiple(0.99)
-MM = StudyConfig(start="x", end="x").mm_by_tier
+SNAP = pd.read_csv(ROOT / "paper" / "data" / "venue_leverage.csv")
+BIN = SNAP[(SNAP.venue == "Binance") & SNAP.first_bracket_mmr.notna()]
+MMR_BTC = float(BIN.loc[BIN.contract == "BTCUSDT", "first_bracket_mmr"].iloc[0])
 
 
 def pct(x, nd=1):
@@ -84,7 +86,7 @@ def tier_legend(fig, ax):
 
 # ---------------------------------------------------------------- Figure 1: one real window, three leverages
 def fig_example():
-    sym, start, h, m = "BTCUSDT", pd.Timestamp("2026-02-05 17:00", tz="UTC"), 1440, MM["majors"]
+    sym, start, h, m = "BTCUSDT", pd.Timestamp("2026-02-05 17:00", tz="UTC"), 1440, MMR_BTC
     b = pd.read_parquet(DATA / "parquet" / "markPriceKlines" / "1m" / f"{sym}.parquet")
     t = pd.to_datetime(b["open_time"], unit="ms", utc=True)
     w = b[(t >= start) & (t < start + pd.Timedelta(minutes=h))].copy()
@@ -271,14 +273,24 @@ def table_breach():
         + "\n".join(lines[:-1]) + "\n\\bottomrule\n\\end{tabular}\n")
 
 
+def offered(tier, L, h=60, side="long"):
+    """Share of the tier's windows in which the contract offers leverage L (vs 2x, offered by all)."""
+    n = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == side)].set_index("leverage")["n_windows"]
+    return n.get(float(L), 0) / n.get(2.0, np.nan)
+
+
 def table_leverage():
-    """10x, 25x and 50x side by side: close and path breach probabilities and the unseen share."""
+    """10x, 25x and 50x side by side: coverage, close and path breach probabilities, unseen share."""
     lines = []
     for tier in TIERS:
         for i, L in enumerate(EXAMPLE_LEVERAGES):
-            cells = [SHORT[tier] if i == 0 else "", f"{L}x", pct(liquidation_distance(L, MM[tier], 'long'), 2)]
+            cells = [SHORT[tier] if i == 0 else "", f"{L}x", pct(offered(tier, L), 0)]
             for h in (60, 1440):
-                r = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == "long") & (mark.leverage == L)].iloc[0]
+                r = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == "long") & (mark.leverage == L)]
+                if r.empty:
+                    cells += ["--"] * 3
+                    continue
+                r = r.iloc[0]
                 cells += [pct(r.p_close, 2), pct(r.p_path, 2), pct(r.hidden_share, 0) if r.p_close > 0 else "--"]
             lines.append(" & ".join(cells) + " \\\\")
         lines.append("\\addlinespace[2pt]")
@@ -286,7 +298,7 @@ def table_leverage():
         "\\begin{tabular}{@{}llrrrrrrr@{}}\n\\toprule\n"
         " & & & \\multicolumn{3}{c}{1 h} & \\multicolumn{3}{c}{24 h} \\\\\n"
         "\\cmidrule(lr){4-6}\\cmidrule(lr){7-9}\n"
-        "Tier & $L$ & $d_{\\text{long}}$ & $p_C$ & $p_P$ & $U$ & $p_C$ & $p_P$ & $U$ \\\\\n\\midrule\n"
+        "Tier & $L$ & Offered & $p_C$ & $p_P$ & $U$ & $p_C$ & $p_P$ & $U$ \\\\\n\\midrule\n"
         + "\n".join(lines[:-1]) + "\n\\bottomrule\n\\end{tabular}\n")
 
 
@@ -333,18 +345,88 @@ def table_robustness():
 
 
 def table_liquidation():
-    levs = [5, 10, 25, 50, 75, 100, 125, 150]
+    levs = [10, 20, 25, 50, 75, 100, 150]
+    g = BIN.groupby("first_bracket_mmr").agg(n=("contract", "size"), lev=("max_leverage", "median"))
+    g = g[g.n >= 2]  # keeps BTC and ETH (0.4%)
     lines = []
-    for tier in TIERS:
-        cells = [SHORT[tier], pct(MM[tier], 1)]
+    for m, row in g.iterrows():
+        cells = [pct(m, 2), f"{row.n:.0f}", f"{row.lev:.0f}x"]
         for L in levs:
-            d = liquidation_distance(L, MM[tier], "long")
+            d = liquidation_distance(L, m, "long")
             cells.append(f"{100 * d:.2f}" if d > 0 else "--")
         lines.append(" & ".join(cells) + " \\\\")
     (TAB / "tab_liquidation.tex").write_text(
-        "\\begin{tabular}{@{}lr" + "r" * len(levs) + "@{}}\n\\toprule\n"
-        "Tier & $m$ & " + " & ".join(f"{L}x" for L in levs) + " \\\\\n\\midrule\n"
+        "\\begin{tabular}{@{}rrr" + "r" * len(levs) + "@{}}\n\\toprule\n"
+        "$m$ & Contracts & Max lev. & " + " & ".join(f"{L}x" for L in levs) + " \\\\\n\\midrule\n"
         + "\n".join(lines) + "\n\\bottomrule\n\\end{tabular}\n")
+
+
+def text_macros(ex) -> str:
+    """Every number quoted in the prose, so the text can never drift from the tables."""
+    nm = mark[mark.tier != "majors"]
+    def u_range(df, L):
+        x = df[(df.leverage == L) & (df.p_close > 0)].hidden_share
+        return f"{100 * x.min():.0f}", f"{100 * x.max():.0f}"
+    def cell(tier, h, side, L, col, s=mark):
+        r = s[(s.tier == tier) & (s.horizon == h) & (s.side == side) & (s.leverage == L)]
+        return float(r[col].iloc[0]) if len(r) else float("nan")
+    def p(x):
+        return pct(x, 2 if x < 0.01 else 1)
+    q99 = q_mark[q_mark.alpha == 0.99]
+    lev_cells = mark[(mark.tier != "majors") & (mark.side == "long") & mark.leverage.isin(EXAMPLE_LEVERAGES)
+                     & mark.horizon.isin([60, 1440]) & (mark.p_close > 0)].hidden_share
+    # cohort vs main: largest absolute change over every cell both runs define
+    k = q99.merge(q_cohort[q_cohort.alpha == 0.99], on=["tier", "horizon", "side", "alpha"], suffixes=("", "_c"))
+    uu = mark[(mark.leverage == 10) & (mark.p_close > 0)].merge(
+        cohort[(cohort.leverage == 10) & (cohort.p_close > 0)], on=["tier", "horizon", "leverage", "side"], suffixes=("", "_c"))
+    lo, hi = pd.Timestamp("2025-11-01", tz="UTC"), pd.Timestamp("2026-11-01", tz="UTC")
+    lst = pd.read_csv(DATA / "listing.csv"); lst["listing_date"] = pd.to_datetime(lst["listing_date"], utc=True)
+    lt = pd.read_csv(DATA / "last_trade.csv"); lt["trading_until"] = pd.to_datetime(lt["trading_until"], utc=True)
+    new = lst[(lst.listing_date >= lo) & (lst.listing_date < hi)]
+    gone = lt[(lt.trading_until >= lo) & (lt.trading_until < hi - pd.Timedelta(hours=1))]
+    months = pd.period_range("2025-11", "2026-10", freq="M").strftime("%Y-%m")
+    m_new = new.groupby(new.listing_date.dt.strftime("%Y-%m")).size().reindex(months, fill_value=0)
+    m_gone = gone.groupby(gone.trading_until.dt.strftime("%Y-%m")).size().reindex(months, fill_value=0)
+    used = pd.read_csv(RES / "mark" / "margins_used.csv")
+    names = {10: "EXTEN", 25: "EXTWENTYFIVE", 50: "EXFIFTY"}
+    m = {names[L]: f"{hit:.1f}" for L, (_, hit) in ex["touches"].items()}
+    m.update({
+        "UTenLo": u_range(nm, 10)[0], "UTenHi": u_range(nm, 10)[1],
+        "UTwentyFiveLo": u_range(nm, 25)[0], "UTwentyFiveHi": u_range(nm, 25)[1],
+        "TailDayLongPC": p(cell("tail", 1440, "long", 10, "p_close")),
+        "TailDayLongPP": p(cell("tail", 1440, "long", 10, "p_path")),
+        "TailDayShortPC": p(cell("tail", 1440, "short", 10, "p_close")),
+        "TailDayShortPP": p(cell("tail", 1440, "short", 10, "p_path")),
+        "MajorsDayU": f"{100 * cell('majors', 1440, 'long', 10, 'hidden_share'):.0f}",
+        "TailHourPPTen": p(cell("tail", 60, "long", 10, "p_path")),
+        "TailHourPPTwentyFive": p(cell("tail", 60, "long", 25, "p_path")),
+        "TailHourPPFifty": p(cell("tail", 60, "long", 50, "p_path")),
+        "TailHourPCTen": p(cell("tail", 60, "long", 10, "p_close")),
+        "TailHourPCTwentyFive": p(cell("tail", 60, "long", 25, "p_close")),
+        "TailHourPCFifty": p(cell("tail", 60, "long", 50, "p_close")),
+        "TailDayPPFifty": p(cell("tail", 1440, "long", 50, "p_path")),
+        "TailDayPCFifty": p(cell("tail", 1440, "long", 50, "p_close")),
+        "LargeDayPPTwentyFive": p(cell("large", 1440, "long", 25, "p_path")),
+        "LargeDayPCTwentyFive": p(cell("large", 1440, "long", 25, "p_close")),
+        "LevULo": f"{100 * lev_cells.min():.0f}", "LevUHi": f"{100 * lev_cells.max():.0f}",
+        "KappaLo": f"{q99.multiple.min():.2f}", "KappaHi": f"{q99.multiple.max():.2f}",
+        "LargeHourQC": pct(q99[(q99.tier == "large") & (q99.horizon == 60) & (q99.side == "long")].q_close.iloc[0], 1),
+        "LargeHourQP": pct(q99[(q99.tier == "large") & (q99.horizon == 60) & (q99.side == "long")].q_path.iloc[0], 1),
+        "CohortMaxDK": f"{(k.multiple - k.multiple_c).abs().max():.2f}",
+        "CohortMaxDU": f"{100 * (uu.hidden_share - uu.hidden_share_c).abs().max():.0f}",
+        "RobLargeMark": f"{100 * cell('large', 60, 'long', 10, 'hidden_share'):.0f}",
+        "RobLargeLast": f"{100 * cell('large', 60, 'long', 10, 'hidden_share', last):.0f}",
+        "RobTailMark": f"{100 * cell('tail', 60, 'long', 10, 'hidden_share'):.0f}",
+        "RobTailLast": f"{100 * cell('tail', 60, 'long', 10, 'hidden_share', last):.0f}",
+        "MMRBTC": pct(MMR_BTC, 1), "MMRMedian": pct(BIN.first_bracket_mmr.median(), 1),
+        "MMRMax": pct(BIN.first_bracket_mmr.max(), 0),
+        "FallbackN": f"{used.loc[used.source == 'tier median', 'symbol'].nunique()}",
+        "ListingsN": f"{len(new)}", "DelistingsN": f"{len(gone)}",
+        "ListingsPerMonth": f"{m_new.mean():.1f}", "DelistingsPerMonth": f"{m_gone.mean():.1f}",
+        "ListingsMin": f"{m_new.min()}", "ListingsMax": f"{m_new.max()}",
+        "DelistingsMin": f"{m_gone.min()}", "DelistingsMax": f"{m_gone.max()}",
+    })
+    return "".join(f"\\newcommand{{\\{k}}}{{{v}}}\n" for k, v in m.items())
 
 
 if __name__ == "__main__":
@@ -359,9 +441,7 @@ if __name__ == "__main__":
     table_quantiles()
     table_robustness()
     table_liquidation()
-    names = {10: "EXTEN", 25: "EXTWENTYFIVE", 50: "EXFIFTY"}
-    (TAB / "macros.tex").write_text("".join(
-        f"\\newcommand{{\\{names[L]}}}{{{hit:.1f}}}\n" for L, (_, hit) in ex["touches"].items()))
+    (TAB / "macros.tex").write_text(text_macros(ex))
     print("example:", ex)
     print("figures:", sorted(p.name for p in FIG.glob("*.pdf")))
     print("tables:", sorted(p.name for p in TAB.glob("*.tex")))

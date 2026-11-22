@@ -76,3 +76,17 @@ def test_balanced_cohort_needs_burn_in_before_start_and_trading_at_end():
                          "trading_until": ["2026-11-01 00:00:00+00:00", "2026-11-01 00:00:00+00:00",
                                            "2026-06-01 09:00:00+00:00"]})
     assert pipeline.balanced_cohort(listing, last, "2025-11-01", "2026-10-31", 30) == ["OLD"]
+
+
+def test_per_contract_margins_skip_unoffered_leverage():
+    terms = {"tail": (0.025, 20.0)}  # a typical small contract: 2.5% maintenance, 20x max
+    g = pipeline.symbol_grid((10, 20, 25, 50), terms)
+    assert set(g["leverage"]) == {10.0, 20.0}
+    d10 = g[(g.leverage == 10) & (g.side == "long")]["d"].item()
+    assert abs(d10 - (0.1 - 0.025) / (1 - 0.025)) < 1e-12
+
+
+def test_tier_fallback_is_median_of_known_contracts():
+    u = pd.DataFrame({"symbol": ["A", "B", "C", "D"], "tier": ["tail"] * 4})
+    fb = pipeline.tier_fallback_margins(u, {"A": (0.01, 50.0), "B": (0.02, 25.0), "C": (0.03, 20.0)})
+    assert fb == {"tail": (0.02, 25.0)}

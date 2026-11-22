@@ -21,7 +21,7 @@ from pathlib import Path
 import pandas as pd
 
 from . import archive
-from .pipeline import LAST_TRADE_CSV, StudyConfig, balanced_cohort, compute_last_trades, run
+from .pipeline import LAST_TRADE_CSV, StudyConfig, balanced_cohort, compute_last_trades, load_margins, run
 from .universe import UniverseConfig
 
 
@@ -99,6 +99,7 @@ def cmd_analyze(args: argparse.Namespace) -> None:
     symbols = tuple(args.symbols_file.read_text().split()) if args.symbols_file else None
     cfg = StudyConfig(
         symbols=symbols,
+        margins=load_margins(args.margins) if args.margins else None,
         start=args.start,
         end=args.end,
         horizons=tuple(int(h) for h in args.horizons.split(",")),
@@ -156,6 +157,8 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--out", type=Path, default=Path("results"))
     s.add_argument("--symbols-file", type=Path, help="restrict the universe to these symbols")
     s.add_argument("--tag", help="results subfolder (default: the dataset name)")
+    s.add_argument("--margins", type=Path,
+                   help="venue snapshot CSV (scripts/venue_leverage.py): per-contract maintenance rate and max leverage")
     s.set_defaults(fn=cmd_analyze)
 
     args = p.parse_args(argv)

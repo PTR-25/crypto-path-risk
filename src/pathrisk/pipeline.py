@@ -14,7 +14,7 @@ import pandas as pd
 
 from . import archive
 from .bootstrap import bootstrap_ci
-from .liquidation import threshold_grid
+from .liquidation import liquidation_distance, threshold_grid
 from .metrics import breach_counts, daily_rates, quantile_multiples, summarise
 from .universe import UniverseConfig, build_universe, daily_quote_volume
 from .windows import build_windows
@@ -27,15 +27,51 @@ class StudyConfig:
     horizons: tuple[int, ...] = (60, 240, 480, 1440)  # minutes: 1h, 4h, the 8h funding interval, 24h
     step: int = 60  # a new window every hour
     leverages: tuple[float, ...] = (2, 3, 5, 10, 20, 50)
-    # Representative maintenance-margin rates per tier. ASSUMPTIONS, not venue data:
-    # replace with Binance's first-bracket rates from /fapi/v1/leverageBracket if you have a key.
+    # Fallback maintenance-margin rates per tier, used only when `margins` is not given.
     mm_by_tier: dict[str, float] = field(
         default_factory=lambda: {"majors": 0.004, "large": 0.005, "tail": 0.01, "new": 0.01}
     )
+    # Per-contract venue terms: symbol -> (first-bracket maintenance-margin rate, maximum leverage).
+    # With it, each contract uses its own rate, and a leverage the contract does not offer is skipped.
+    # Contracts missing from it (delisted before the snapshot) take their tier's median terms.
+    margins: dict[str, tuple[float, float]] | None = None
     universe: UniverseConfig = UniverseConfig()
     n_boot: int = 2000
     block_days: int = 7
     symbols: tuple[str, ...] | None = None  # restrict the universe, e.g. to the balanced cohort
+
+
+def load_margins(path: Path, venue: str = "Binance") -> dict[str, tuple[float, float]]:
+    """Read per-contract (maintenance-margin rate, max leverage) from a venue snapshot CSV
+    (scripts/venue_leverage.py writes one)."""
+    df = pd.read_csv(path)
+    df = df[(df["venue"] == venue) & df["first_bracket_mmr"].notna()]
+    return {r.contract: (float(r.first_bracket_mmr), float(r.max_leverage)) for r in df.itertuples()}
+
+
+def tier_fallback_margins(
+    universe: pd.DataFrame, margins: dict[str, tuple[float, float]]
+) -> dict[str, tuple[float, float]]:
+    """Median terms of the known contracts in each tier, weighted by contract-days."""
+    known = universe[universe["symbol"].isin(margins)]
+    terms = known["symbol"].map(margins)
+    k = known.assign(mmr=[t[0] for t in terms], lev=[t[1] for t in terms])
+    return {tier: (float(g["mmr"].median()), float(g["lev"].median())) for tier, g in k.groupby("tier")}
+
+
+def symbol_grid(leverages, tier_terms: dict[str, tuple[float, float]]) -> pd.DataFrame:
+    """Liquidation distances for one contract, per tier it may sit in; leverages above the
+    contract's maximum, or under maintenance at entry, are left out."""
+    rows = []
+    for tier, (m, max_lev) in tier_terms.items():
+        for lev in leverages:
+            if lev > max_lev:
+                continue
+            for side in ("long", "short"):
+                d = liquidation_distance(lev, m, side)
+                if d > 0:
+                    rows.append({"tier": tier, "leverage": float(lev), "side": side, "d": float(d)})
+    return pd.DataFrame(rows, columns=["tier", "leverage", "side", "d"])
 
 
 def balanced_cohort(
@@ -106,6 +142,8 @@ def run(
     if cfg.symbols is not None:
         universe = universe[universe["symbol"].isin(cfg.symbols)].reset_index(drop=True)
     grid = threshold_grid(list(cfg.leverages), cfg.mm_by_tier)
+    fallback = tier_fallback_margins(universe, cfg.margins) if cfg.margins else {}
+    used = []
     bar_dir = data_dir / "parquet" / dataset.name / dataset.interval
     lo, hi = pd.Timestamp(cfg.start, tz="UTC"), pd.Timestamp(cfg.end, tz="UTC")
 
@@ -118,6 +156,13 @@ def run(
         if not path.exists():
             continue
         bars = pd.read_parquet(path)
+        sym_grid = grid
+        if cfg.margins:
+            terms = cfg.margins.get(sym)
+            tier_terms = {t: terms or fallback[t] for t in tiers["tier"].unique() if terms or t in fallback}
+            sym_grid = symbol_grid(cfg.leverages, tier_terms)
+            used += [{"symbol": sym, "tier": t, "source": "snapshot" if terms else "tier median",
+                      "mmr": v[0], "max_leverage": v[1]} for t, v in tier_terms.items()]
         tier_by_date = tiers.set_index("date")["tier"]
         trading_until = tiers["trading_until"].iloc[0]
         for h in cfg.horizons:
@@ -129,7 +174,9 @@ def run(
             w = w.dropna(subset=["tier"]).assign(symbol=sym, horizon=h)
             if w.empty:
                 continue
-            counts.append(breach_counts(w, grid))
+            if sym_grid.empty:
+                continue
+            counts.append(breach_counts(w, sym_grid))
             kept.append(w[["date", "symbol", "tier", "horizon", "r", "mae_long", "mae_short"]])
 
     if not counts:
@@ -148,4 +195,6 @@ def run(
     daily.to_csv(out_dir / "daily_rates.csv", index=False)
     coverage.to_csv(out_dir / "universe_coverage.csv")
     grid.to_csv(out_dir / "liquidation_grid.csv", index=False)
+    if used:
+        pd.DataFrame(used).to_csv(out_dir / "margins_used.csv", index=False)
     return {"summary": summary, "quantiles": quantiles, "daily": daily, "coverage": coverage}
