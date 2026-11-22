@@ -373,6 +373,10 @@ def text_macros(ex) -> str:
     def p(x):
         return pct(x, 2 if x < 0.01 else 1)
     q99 = q_mark[q_mark.alpha == 0.99]
+    BROWNIAN_K99 = float(q99.brownian_multiple.iloc[0])
+    MMR_MED = float(BIN.first_bracket_mmr.median())
+    def qcell(tier, h, side):
+        return q99[(q99.tier == tier) & (q99.horizon == h) & (q99.side == side)].iloc[0]
     lev_cells = mark[(mark.tier != "majors") & (mark.side == "long") & mark.leverage.isin(EXAMPLE_LEVERAGES)
                      & mark.horizon.isin([60, 1440]) & (mark.p_close > 0)].hidden_share
     # cohort vs main: largest absolute change over every cell both runs define
@@ -414,6 +418,17 @@ def text_macros(ex) -> str:
         "KappaLo": f"{q99.multiple.min():.2f}", "KappaHi": f"{q99.multiple.max():.2f}",
         "LargeHourQC": pct(q99[(q99.tier == "large") & (q99.horizon == 60) & (q99.side == "long")].q_close.iloc[0], 1),
         "LargeHourQP": pct(q99[(q99.tier == "large") & (q99.horizon == 60) & (q99.side == "long")].q_path.iloc[0], 1),
+        "RWExLo": f"{100 * (q99.multiple.min() / BROWNIAN_K99 - 1):.0f}",
+        "RWExHi": f"{100 * (q99.multiple.max() / BROWNIAN_K99 - 1):.0f}",
+        "LongKappaExLo": f"{100 * (q99[q99.side == 'long'].multiple.min() - 1):.0f}",
+        "LongKappaExHi": f"{100 * (q99[q99.side == 'long'].multiple.max() - 1):.0f}",
+        "ShortKappaExHi": f"{100 * (q99[q99.side == 'short'].multiple.max() - 1):.0f}",
+        "NewDayShortQC": pct(qcell("new", 1440, "short").q_close, 1),
+        "NewDayShortQP": pct(qcell("new", 1440, "short").q_path, 1),
+        "LevCloseLargeHour": f"{1 / (qcell('large', 60, 'long').q_close + MMR_MED):.0f}",
+        "LevPathLargeHour": f"{1 / (qcell('large', 60, 'long').q_path + MMR_MED):.0f}",
+        "LevCloseTailDayShort": f"{1 / (qcell('tail', 1440, 'short').q_close + MMR_MED):.1f}",
+        "LevPathTailDayShort": f"{1 / (qcell('tail', 1440, 'short').q_path + MMR_MED):.1f}",
         "CohortMaxDK": f"{(k.multiple - k.multiple_c).abs().max():.2f}",
         "CohortMaxDU": f"{100 * (uu.hidden_share - uu.hidden_share_c).abs().max():.0f}",
         "RobLargeMark": f"{100 * cell('large', 60, 'long', 10, 'hidden_share'):.0f}",

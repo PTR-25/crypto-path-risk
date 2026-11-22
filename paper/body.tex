@@ -241,7 +241,18 @@ recover before the period ends. We call the fraction of liquidations that the cl
 no fat tails. Consider any path that touches the liquidation level. From that moment on, the walk is
 as likely to go up as down, so it is as likely to end above the level as below it. Half of the paths
 that touch the level therefore end above it, and the close view never records them: $U=50\%$. This is
-the \emph{reflection principle}, and it holds for every volatility, horizon and leverage. Even in the
+the \emph{reflection principle},\footnote{In symbols: let $W_t$ be a random walk in continuous time
+(a Brownian motion) with volatility $\sigma$, started at $0$, and let a long be liquidated when $W$
+first reaches $-d$. Take any path that touches $-d$ and ends \emph{above} it, and reflect the part of
+the path after the touch in the line $-d$ (swap every later up-move for a down-move of the same size).
+The reflected path is equally likely, and it ends \emph{below} $-d$. This pairs the paths one to one,
+so $P(\text{touch and end above}) = P(\text{end below})$, and therefore
+$P(\min_{t\le T} W_t \le -d) = 2\,P(W_T \le -d) = 2\,\Phi\bigl(-d/(\sigma\sqrt{T})\bigr)$, where $\Phi$
+is the standard normal distribution function. The close sees $P(W_T\le -d)$; the liquidation engine
+sees twice as much, so $U = 1-\tfrac12 = 50\%$ for every $d$, $\sigma$ and $T$. The same identity gives
+the tail ratio below: the 1-in-100 path move solves $2\Phi(-q/\sigma\sqrt{T}) = 1\%$ and the 1-in-100
+close move solves $\Phi(-q/\sigma\sqrt{T}) = 1\%$, so their ratio is $z_{0.995}/z_{0.99} =
+2.576/2.326 = 1.107$.} and it holds for every volatility, horizon and leverage. Even in the
 gentlest possible market, a risk measure built on closing prices misses half of all liquidations.
 
 The same argument applies to tail risk. In a random walk, the 1-in-100 worst move \emph{along the
@@ -361,7 +372,13 @@ the requirement fixed at entry, $mN$, both sides would be liquidated at $1/L-m$.
 brackets, in the price that sets the notional, and in what the requirement includes. Hyperliquid sets
 the maintenance margin at half the initial margin at a contract's maximum leverage~\cite{hl-margin};
 OKX adds the liquidation fee to the maintenance requirement when it computes its margin
-ratio~\cite{okx-margin}. Where maintenance is set on the entry notional, $d=1/L-m$ for both sides, and
+ratio~\cite{okx-margin}. Deribit, in standard margin, sets the initial margin of a future or
+perpetual at $1/L(N)$, where the available leverage $L(N)$ starts at a tier's maximum (50x for BTC,
+ETH, SOL and XRP) and falls as the position size $N$ approaches the contract's maximum amount; the
+maintenance margin is two thirds of the initial margin~\cite{deribit-sm}. The maintenance rate is
+therefore tied to the venue's maximum leverage, not to the trader's: a small BTC position carries
+$m=\tfrac23\cdot 2\% \approx 1.33\%$, against Binance's 0.4\%. A 50x BTC long would be liquidated after
+about $2\%-1.33\%=0.67\%$ on Deribit, and after 1.6\% on Binance. Where maintenance is set on the entry notional, $d=1/L-m$ for both sides, and
 the long--short asymmetry above disappears; where collateral is held in the traded coin, as with
 inverse contracts, equity itself moves with the price and the level is different again. The
 liquidation levels in this paper are therefore Binance's. The unseen share, however, depends on the
@@ -423,7 +440,9 @@ breach in the sample.}
 \input{tables/tab_breach.tex}
 \end{table}
 
-Figure~\ref{fig:hidden} shows $U$ across leverage levels. It lies close to the random-walk value of
+Figure~\ref{fig:hidden} shows the unseen share $U$, the fraction of liquidations whose window ends
+back inside the liquidation level and which closing prices therefore never record ($U=1-p_C/p_P$),
+across leverage levels. It lies close to the random-walk value of
 50\% almost everywhere, and a few points above it in most cells. The blind spot is therefore
 \emph{structural}: a measure that looks only at the close misses about half of all liquidations even
 in an idealised market\iftechnical{} (Corollary~\ref{cor:half})\fi, and crypto price paths do not
@@ -478,6 +497,21 @@ against $1.107$ for a random walk\iftechnical{} (Proposition~\ref{prop:kappa})\f
 long in the Large tier, the close-to-close 1-in-100 loss is \LargeHourQC; the path reaches
 \LargeHourQP.
 
+The gap between \KappaLo--\KappaHi{} and $1.107$ has two consequences. First, the random-walk
+correction is not enough. Even a risk manager who knows the reflection principle and scales
+closing-price tails up by $1.107$ still understates the 1-in-100 path move by \RWExLo--\RWExHi\%. Within
+a holding window, crypto prices make larger excursions relative to where they end than a random walk
+does, so the correction has to be measured, not assumed. Even in a random walk, a liquidation level
+placed at the 1-in-100 closing loss is not a 1-in-100 event: the path reaches it in 1 window in 50.
+
+Second, the gap translates directly into leverage. Suppose a trader picks the highest leverage at which
+the 1-in-100 adverse move just reaches the liquidation level, $1/L \approx Q_{0.99} + m$. For a one-hour long
+in the Large tier, at the median maintenance-margin rate of \MMRMedian, closing prices allow about
+\LevCloseLargeHour x; the path allows about \LevPathLargeHour x. A position sized on closing-price
+tails is over-levered. The quantile multiple does
+not depend on leverage or on any venue's margin rule: it is a property of the price paths, and holds
+on any venue that liquidates on a continuously monitored price.
+
 \begin{table}[t]
 \centering
 \caption{99th-percentile adverse move at the close ($Q^C_{0.99}$) and along the path ($Q^P_{0.99}$),
@@ -503,6 +537,15 @@ For shorts outside the Majors tier, it rises with the horizon, from about 1.4 at
 at 24 hours, and is highest for new listings, at \KappaHi. Upward spikes that subsequently fade,
 typical of squeezes in thin and newly listed contracts, liquidate short positions without leaving a
 trace in the closing price.
+
+The asymmetry matters because most risk models are symmetric: one volatility serves both sides. At
+one hour, longs and shorts have similar tails at the close and along the path. Over longer holding
+periods, the short's path tail pulls away. For a short in a newly listed contract held for 24 hours,
+the 1-in-100 close-to-close loss is \NewDayShortQC; along the path it is \NewDayShortQP. In leverage
+terms, a short in the Tail tier held for a day survives its 1-in-100 closing loss at up to
+\LevCloseTailDayShort x, but its 1-in-100 path move only at \LevPathTailDayShort x. A symmetric,
+close-based model therefore sets margins for shorts in thin and new contracts too tight, and the
+error grows with the holding period.
 
 \section{Robustness}
 \label{sec:robust}
@@ -550,8 +593,12 @@ range-based estimators~\cite{parkinson,garmanklass,rogerssatchell}, not from clo
 \item \textbf{Match the horizon to the monitoring.} Liquidation is checked continuously. A daily risk
 figure describes the end of the day; the position must survive every moment before it.
 \item \textbf{Scale closing-price tails up, asymmetrically.} Where only close-to-close statistics
-are available, these data indicate that the 1-in-100 adverse move along the path is 20--45\% larger
-than the closing loss for longs, and up to 63\% larger for shorts in thin or newly listed contracts.
+are available, these data indicate that the 1-in-100 adverse move along the path is
+\LongKappaExLo--\LongKappaExHi\% larger than the closing loss for longs, and up to \ShortKappaExHi\%
+larger for shorts in thin or newly listed contracts. The random-walk factor of $1.107$ captures only
+part of this gap, and leverage should be cut in proportion: in the examples above, from about
+\LevCloseLargeHour x to \LevPathLargeHour x for a one-hour long, and from \LevCloseTailDayShort x to
+\LevPathTailDayShort x for a day-long short in the Tail tier.
 \item \textbf{Treat new listings as a separate regime.} The first 30 days carry the highest
 close-to-close risk and the heaviest path tail for short positions.
 \end{enumerate}
@@ -578,7 +625,10 @@ with each contract's own margin terms and delisted contracts included, the share
 and ETH. The share is stable; the count is not. A day-long 25x long in the Tail tier is liquidated in
 \TailDayLongPPTwentyFive{} of windows, against \TailDayLongPP{} at 10x. The tail is worse than the frequency suggests: the 1-in-100 adverse move along the path is
 \KappaLo{} to \KappaHi{} times the close-to-close figure, well above the random-walk value of 1.107,
-and worst for short positions in newly listed contracts. Neither result depends on survivorship, and
+and worst for short positions in newly listed contracts. Even a random-walk correction of closing
+tails leaves the path move understated by \RWExLo--\RWExHi\%, and a position sized on closing-price
+tails carries more leverage than its own 1-in-100 path move allows. Neither result depends on
+survivorship, and
 neither is an artefact of mark-price smoothing.
 
 The practical conclusion is a warning. Volatility, value-at-risk and leverage limits estimated from
@@ -613,6 +663,9 @@ accessed 22 November 2026.
 \url{https://api.bybit.com/v5/market/instruments-info?category=linear}, retrieved 22 November 2026.
 \bibitem{okx-liq} OKX. System liquidation mechanism. Help centre,
 \url{https://www.okx.com/en-us/help/system-liquidation-mechanism-eea}, accessed 22 November 2026.
+\bibitem{deribit-sm} Deribit. Standard margin. Support centre,
+\url{https://support.deribit.com/hc/en-us/articles/25944811528477-Standard-Margin}, accessed 22
+November 2026.
 \bibitem{okx-margin} OKX. Futures margin calculation rules. Help centre,
 \url{https://www.okx.com/en-us/help/futures-margin-calculation-rules}, accessed 22 November 2026.
 \bibitem{okx-api} OKX. V5 API, public instruments,
