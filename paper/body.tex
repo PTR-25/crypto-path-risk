@@ -349,13 +349,13 @@ To first order the liquidation level is $1/L-m$ from entry, which is why a 50x l
 ($m=0.4\%$) is liquidated after 1.6\%, not 2\%. A position is admissible only if $1/L>m$. The first
 bracket covers notionals up to a cap (300{,}000 USDT for BTCUSDT); larger positions face higher rates
 and lower maximum leverage, so the levels studied here are those of positions within the first
-bracket. Because the requirement is set on the current mark notional, it moves with the price at
-rate $m$. For a long, a fall of $x$ lowers equity by $Nx$ and the requirement by $mNx$, so the gap
-between them closes at rate $1-m$; for a short, a rise of $x$ lowers equity by $Nx$ and raises the
-requirement by $mNx$, so the gap closes at rate $1+m$. The long therefore reaches its liquidation level
-slightly later than the short: for BTC at 50x ($m=0.4\%$), after 1.606\% against 1.594\%; at 10x
-with $m=2\%$, after 8.16\% against 7.84\%. Were the requirement fixed at entry, $mN$, both sides would
-be liquidated at $1/L-m$.
+bracket.\footnote{The long and short levels differ slightly because the requirement is set on the
+current mark notional and so moves with the price at rate $m$. For a long, a fall of $x$ lowers equity
+by $Nx$ and the requirement by $mNx$, so the gap between them closes at rate $1-m$; for a short, a rise
+of $x$ lowers equity by $Nx$ and raises the requirement by $mNx$, so the gap closes at rate $1+m$. The
+long therefore reaches its liquidation level slightly later than the short: for BTC at 50x
+($m=0.4\%$), after 1.606\% against 1.594\%; at 10x with $m=2\%$, after 8.16\% against 7.84\%. Were
+the requirement fixed at entry, $mN$, both sides would be liquidated at $1/L-m$.}
 
 \paragraph{Other venues.} Maintenance-margin rules differ between exchanges, in the rates and
 brackets, in the price that sets the notional, and in what the requirement includes. Hyperliquid sets
