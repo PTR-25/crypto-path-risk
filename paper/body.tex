@@ -440,21 +440,27 @@ breach in the sample.}
 \input{tables/tab_breach.tex}
 \end{table}
 
-Figure~\ref{fig:hidden} shows the unseen share $U$, the fraction of liquidations whose window ends
-back inside the liquidation level and which closing prices therefore never record ($U=1-p_C/p_P$),
-across leverage levels. It lies close to the random-walk value of
-50\% almost everywhere, and a few points above it in most cells. The blind spot is therefore
-\emph{structural}: a measure that looks only at the close misses about half of all liquidations even
-in an idealised market\iftechnical{} (Corollary~\ref{cor:half})\fi, and crypto price paths do not
-improve on that. The Majors tier stands out, at \MajorsDayU\% for a 24-hour 10x long, but on few
-events and with wide intervals: BTC and ETH rarely move 10\% within a day.
+Figure~\ref{fig:hidden} shows both probabilities across leverage levels, for long positions held one
+hour and one day. The solid line is the probability of liquidation along the path, $p_P$; the dashed
+line is the probability that the window ends beyond the liquidation level, $p_C$, which is all a
+close-to-close view can see. The shaded band between them is the liquidations that the close misses.
+Two things stand out. First, liquidations rise steeply with leverage, and so does the band: the number
+of liquidations that the close misses grows with leverage. Second, the dashed line stays at about half
+the solid line at every leverage, so the unseen share $U=1-p_C/p_P$, the fraction of liquidations
+whose window ends back inside the level, stays close to the random-walk value of 50\%, and a few points
+above it in most cells (Table~\ref{tab:breach}). The blind spot is therefore \emph{structural}: a
+measure that looks only at the close misses about half of all liquidations even in an idealised
+market\iftechnical{} (Corollary~\ref{cor:half})\fi, and crypto price paths do not improve on that. The
+Majors tier stands out, at \MajorsDayU\% for a 24-hour 10x long, but on few events and with wide
+intervals: BTC and ETH rarely move 10\% within a day.
 
 \begin{figure}[t]
 \centering
-\includegraphics[width=\linewidth]{figures/fig2_hidden_share.pdf}
-\caption{Unseen share $U$ for long positions, mark price, with 95\% block-bootstrap intervals. Points
-whose interval is wider than 25 percentage points (too few close breaches) are omitted, which removes
-most low-leverage Majors points. Dotted line: random-walk benchmark, 50\%.}
+\includegraphics[width=\linewidth]{figures/fig2_path_vs_close.pdf}
+\caption{Probability that a long position is liquidated along the path ($p_P$, solid) and that the
+window ends beyond the liquidation level ($p_C$, dashed), by leverage, tier and holding horizon, mark
+price, each contract with its own maintenance-margin rate. Shaded: liquidations unseen at the close.
+Note the different vertical scales of the two rows.}
 \label{fig:hidden}
 \end{figure}
 

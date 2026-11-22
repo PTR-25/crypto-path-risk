@@ -125,29 +125,40 @@ def fig_example():
     return {"entry": o, "close": c, "low": lo["low"], "touches": touches}
 
 
-# ---------------------------------------------------------------- Figure 2: unseen share vs leverage
-def fig_hidden_share():
-    fig, axes = plt.subplots(1, 2, figsize=(6.4, 3.0), sharey=True)
-    for ax, h, letter in zip(axes, (60, 1440), "ab"):
-        for tier in TIERS:
-            s = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == "long") & (mark.p_close > 0)]
-            # Points whose 95% CI is wider than 25 points rest on a handful of close breaches: omitted.
-            s = s[(s.hidden_share_hi - s.hidden_share_lo) <= 0.25].sort_values("leverage")
-            yerr = [s.hidden_share - s.hidden_share_lo, s.hidden_share_hi - s.hidden_share]
-            ax.errorbar(s.leverage, s.hidden_share, yerr=yerr, color=COLOR[tier], marker=MARKER[tier],
-                        mec="white", mew=0.8, elinewidth=0.7, capsize=0, label=LABEL[tier])
-        ax.axhline(0.5, color=INK2, lw=0.8, ls=(0, (2, 2)))
-        ax.set_xscale("log")
-        ax.set_xticks([2, 5, 10, 25, 50], ["2x", "5x", "10x", "25x", "50x"])
-        ax.minorticks_off()
-        ax.set_ylim(0, 1)
-        pct_axis(ax)
-        ax.set_xlabel("Leverage")
-        panel(ax, letter, f"long positions, {H_LABEL[h]} horizon")
-    axes[0].set_ylabel("Unseen share $U$")
-    tier_legend(fig, axes[0])
-    fig.tight_layout(w_pad=2.5, rect=(0, 0.08, 1, 1))
-    fig.savefig(FIG / "fig2_hidden_share.pdf")
+# ---------------------------------------------------------------- Figure 2: path vs close breach by leverage
+def fig_path_vs_close():
+    """Small multiples: rows are horizons, columns are tiers. Solid: liquidated along the path (p_P);
+    dashed: ends beyond the level at the close (p_C); the band between them is what the close misses."""
+    hs = (60, 1440)
+    fig, axes = plt.subplots(2, 4, figsize=(6.4, 4.3), sharex=True, sharey="row")
+    for r, h in enumerate(hs):
+        for c, tier in enumerate(TIERS):
+            ax = axes[r, c]
+            s = mark[(mark.tier == tier) & (mark.horizon == h) & (mark.side == "long")].sort_values("leverage")
+            col = COLOR[tier]
+            ax.fill_between(s.leverage, s.p_close, s.p_path, color=col, alpha=0.22, lw=0)
+            ax.plot(s.leverage, s.p_path, color=col, marker=MARKER[tier], mec="white", mew=0.8)
+            ax.plot(s.leverage, s.p_close, color=col, lw=1.2, ls=(0, (3, 1.5)))
+            ax.set_xscale("log")
+            ax.set_xticks([2, 5, 10, 25, 50], ["2x", "5x", "10x", "25x", "50x"])
+            ax.minorticks_off()
+            ax.tick_params(axis="x", labelsize=8)
+            ax.set_ylim(0, 0.4 if h == 60 else 1.0)
+            pct_axis(ax)
+            ax.text(0.03, 0.97, f"{SHORT[tier]}, {H_LABEL[h]}", transform=ax.transAxes, fontsize=8.5,
+                    va="top", ha="left")
+        axes[r, 0].set_ylabel(f"Probability, {H_LABEL[h]} horizon")
+    for ax in axes[1]:
+        ax.set_xlabel("Leverage", fontsize=8.5)
+    g = MUTED
+    handles = [matplotlib.lines.Line2D([], [], color=g, lw=1.6, marker="o", mec="white", ms=4),
+               matplotlib.lines.Line2D([], [], color=g, lw=1.2, ls=(0, (3, 1.5))),
+               matplotlib.patches.Patch(color=g, alpha=0.3, lw=0)]
+    labels = ["Liquidated along the path, $p_P$", "Ends beyond the level, $p_C$", "Unseen at the close"]
+    fig.legend(handles, labels, loc="lower center", ncols=3, fontsize=8.5, bbox_to_anchor=(0.5, -0.01),
+               handlelength=2.2, columnspacing=1.6)
+    fig.tight_layout(w_pad=0.6, h_pad=0.8, rect=(0, 0.06, 1, 1))
+    fig.savefig(FIG / "fig2_path_vs_close.pdf")
     plt.close(fig)
 
 
@@ -448,7 +459,7 @@ def text_macros(ex) -> str:
 
 if __name__ == "__main__":
     ex = fig_example()
-    fig_hidden_share()
+    fig_path_vs_close()
     fig_quantile_multiple()
     fig_mark_vs_last()
     fig_universe()
