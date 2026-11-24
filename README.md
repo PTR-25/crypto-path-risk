@@ -21,6 +21,14 @@ its own Binance maintenance-margin rate and maximum leverage.
 
 Independent research, not affiliated with the author's employer. Not investment advice.
 
+## Headline results
+
+![Path liquidation probability versus close-to-close probability across leverage and tiers](paper/figures/fig2_path_vs_close.png)
+*Liquidation probability along the 1-minute mark-price path ($p_P$, solid) versus ending beyond the liquidation level at the close ($p_C$, dashed), by liquidity tier and leverage. Shaded band: liquidations unseen at the close.*
+
+![Ratio of 99th-percentile adverse path excursion to close-to-close loss](paper/figures/fig3_quantile_multiple.png)
+*Ratio of 99th-percentile intraday adverse excursion to 99th-percentile close-to-close loss across holding horizons, against the Brownian benchmark (1.107, dashed).*
+
 ## Reproduce
 
 Requires [uv](https://docs.astral.sh/uv/) and, for the PDF, [Tectonic](https://tectonic-typesetting.github.io/).
